@@ -28,5 +28,5 @@
   #define JETRACER_ROS_WRAP_PUBLIC_TYPE
 #endif
 #endif  // JETRACER_ROS_WRAP__VISIBILITY_CONTROL_H_
-// Generated 10-Feb-2026 18:00:35
+// Generated 10-Feb-2026 20:08:19
 // Copyright 2019-2020 The MathWorks, Inc.

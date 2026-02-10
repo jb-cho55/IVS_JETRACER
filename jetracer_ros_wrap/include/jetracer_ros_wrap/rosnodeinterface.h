@@ -3,9 +3,9 @@
 //
 // Code generated for Simulink model 'jetRacer_ROS_Wrap'.
 //
-// Model version                  : 1.19
+// Model version                  : 1.20
 // Simulink Coder version         : 26.1 (R2026a) 20-Nov-2025
-// C/C++ source code generated on : Tue Feb 10 18:00:28 2026
+// C/C++ source code generated on : Tue Feb 10 20:08:14 2026
 //
 
 #ifndef _ROS_MATLAB_NODEINTERFACE_

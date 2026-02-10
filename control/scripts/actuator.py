@@ -16,8 +16,8 @@ def callback_throttle(throttle):
 def main():
     rospy.init_node('actuator', anonymous=False)
     rospy.loginfo('jetracer node initiated!')
-    rospy.Subscriber("/Steering", Float32, callback_steering)
-    rospy.Subscriber("/Throttle", Float32, callback_throttle)
+    rospy.Subscriber("/steering_cmd", Float32, callback_steering)
+    rospy.Subscriber("/throttle_cmd", Float32, callback_throttle)
     rospy.spin()
 
 if __name__ == '__main__':

@@ -6,9 +6,9 @@
 //
 // Code generated for Simulink model 'jetRacer_ROS_Wrap'.
 //
-// Model version                  : 1.19
+// Model version                  : 1.20
 // Simulink Coder version         : 26.1 (R2026a) 20-Nov-2025
-// C/C++ source code generated on : Tue Feb 10 18:00:09 2026
+// C/C++ source code generated on : Tue Feb 10 20:08:01 2026
 //
 // Target selection: ert.tlc
 // Embedded hardware selection: Generic->Unspecified (assume 32-bit Generic)
@@ -27,7 +27,7 @@ void jetRacer_ROS_Wrap::step()
   SL_Bus_jetRacer_ROS_Wrap_std_msgs_Float32 rtb_BusAssignment1;
   SL_Bus_jetRacer_ROS_Wrap_std_msgs_Float32 rtb_SourceBlock_o2_0;
   real32_T rateLimiterRate;
-  real32_T rtb_RateLimiter;
+  real32_T rtb_Saturation2;
   boolean_T b_varargout_1;
 
   // Outputs for Atomic SubSystem: '<Root>/Subscribe'
@@ -48,43 +48,56 @@ void jetRacer_ROS_Wrap::step()
   // End of Outputs for SubSystem: '<Root>/Subscribe'
 
   // Gain: '<Root>/Gain'
-  rtb_RateLimiter = 0.04F * jetRacer_ROS_Wrap_B.In1.Data;
+  rtb_Saturation2 = 0.04F * jetRacer_ROS_Wrap_B.In1.Data;
 
   // Saturate: '<Root>/Saturation'
-  if (rtb_RateLimiter > 1.0F) {
-    rtb_RateLimiter = 1.0F;
-  } else if (rtb_RateLimiter < -1.0F) {
-    rtb_RateLimiter = -1.0F;
+  if (rtb_Saturation2 > 1.0F) {
+    rtb_Saturation2 = 1.0F;
+  } else if (rtb_Saturation2 < -1.0F) {
+    rtb_Saturation2 = -1.0F;
   }
 
   // Gain: '<Root>/Gain1' incorporates:
   //   Saturate: '<Root>/Saturation'
 
-  rtb_RateLimiter *= 0.7F;
+  rtb_Saturation2 *= 0.7F;
 
   // Saturate: '<Root>/Saturation1'
-  if (rtb_RateLimiter > 0.6F) {
-    rtb_RateLimiter = 0.6F;
-  } else if (rtb_RateLimiter < -0.6F) {
-    rtb_RateLimiter = -0.6F;
+  if (rtb_Saturation2 > 0.6F) {
+    rtb_Saturation2 = 0.6F;
+  } else if (rtb_Saturation2 < -0.6F) {
+    rtb_Saturation2 = -0.6F;
   }
 
   // End of Saturate: '<Root>/Saturation1'
 
   // RateLimiter: '<Root>/Rate Limiter'
-  rateLimiterRate = rtb_RateLimiter - jetRacer_ROS_Wrap_DW.PrevY;
+  rateLimiterRate = rtb_Saturation2 - jetRacer_ROS_Wrap_DW.PrevY;
   if (rateLimiterRate > 0.016F) {
-    rtb_RateLimiter = jetRacer_ROS_Wrap_DW.PrevY + 0.016F;
+    rtb_Saturation2 = jetRacer_ROS_Wrap_DW.PrevY + 0.016F;
   } else if (rateLimiterRate < -0.016F) {
-    rtb_RateLimiter = jetRacer_ROS_Wrap_DW.PrevY - 0.016F;
+    rtb_Saturation2 = jetRacer_ROS_Wrap_DW.PrevY - 0.016F;
   }
 
-  jetRacer_ROS_Wrap_DW.PrevY = rtb_RateLimiter;
+  jetRacer_ROS_Wrap_DW.PrevY = rtb_Saturation2;
 
   // End of RateLimiter: '<Root>/Rate Limiter'
 
-  // BusAssignment: '<Root>/Bus Assignment'
-  rtb_BusAssignment.Data = rtb_RateLimiter;
+  // Saturate: '<Root>/Saturation2' incorporates:
+  //   Sum: '<Root>/Add'
+
+  if (rtb_Saturation2 - 0.3F > 1.0F) {
+    // BusAssignment: '<Root>/Bus Assignment'
+    rtb_BusAssignment.Data = 1.0F;
+  } else if (rtb_Saturation2 - 0.3F < -1.0F) {
+    // BusAssignment: '<Root>/Bus Assignment'
+    rtb_BusAssignment.Data = -1.0F;
+  } else {
+    // BusAssignment: '<Root>/Bus Assignment'
+    rtb_BusAssignment.Data = rtb_Saturation2 - 0.3F;
+  }
+
+  // End of Saturate: '<Root>/Saturation2'
 
   // Outputs for Atomic SubSystem: '<Root>/Publish'
   // MATLABSystem: '<S3>/SinkBlock'
@@ -95,7 +108,7 @@ void jetRacer_ROS_Wrap::step()
   // BusAssignment: '<Root>/Bus Assignment1' incorporates:
   //   Constant: '<Root>/Constant'
 
-  rtb_BusAssignment1.Data = 0.4F;
+  rtb_BusAssignment1.Data = 0.2F;
 
   // Outputs for Atomic SubSystem: '<Root>/Publish1'
   // MATLABSystem: '<S4>/SinkBlock'
