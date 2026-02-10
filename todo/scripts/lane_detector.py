@@ -1,110 +1,90 @@
+# lane_detector.py
 #!/usr/bin/env python3
-import rospy
-import numpy as np
+
 import cv2
-from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
-
-from lane_detector import LaneDetector
-
-
-def rosimg_to_bgr(msg: Image):
-    """sensor_msgs/Image -> OpenCV BGR (cv_bridge 없이 변환)"""
-    h, w = msg.height, msg.width
-    enc = (msg.encoding or "").lower()
-
-    if enc == "bgr8":
-        return np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, 3).copy()
-
-    if enc == "rgb8":
-        img = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, 3)
-        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-
-    if enc == "mono8":
-        img = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w)
-        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-    # usb_cam에서 흔한 YUYV/YUV422
-    if enc in ("yuyv", "yuv422", "yuy2"):
-        img = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, 2)
-        return cv2.cvtColor(img, cv2.COLOR_YUV2BGR_YUY2)
-
-    raise ValueError(f"Unsupported encoding: {msg.encoding}")
+import numpy as np
+from warper import Warper
+from slidewindow import SlideWindow
 
 
-class LaneToSteeringRawNode:
-    def __init__(self):
-        # 차선 인식기
-        self.detector = LaneDetector(
-            hsv_low=tuple(rospy.get_param("~hsv_low", [50, 50, 50])),
-            hsv_high=tuple(rospy.get_param("~hsv_high", [255, 255, 255])),
-            blur_ksize=int(rospy.get_param("~blur_ksize", 5)),
-            sample_y=int(rospy.get_param("~sample_y", 340)),
-        )
+class LaneDetector:
+    """
+    입력: BGR 이미지 (numpy, HxWx3)
+    출력:
+      - x_location: 차선 중심(또는 목표 추종점) x 좌표 (없으면 None)
+      - current_line: 'LEFT'/'RIGHT'/'MID'
+      - debug: 디버그용 이미지 dict
+    """
+    def __init__(
+        self,
+        hsv_low=(50, 50, 50),
+        hsv_high=(255, 255, 255),
+        blur_ksize=5,
+        use_morph=True,
+        sample_y=340,          # x_location 뽑는 y 기준(기존 코드 338~344 근처)
+    ):
+        self.hsv_low = np.array(hsv_low, dtype=np.uint8)
+        self.hsv_high = np.array(hsv_high, dtype=np.uint8)
+        self.blur_ksize = int(blur_ksize)
+        self.use_morph = bool(use_morph)
+        self.sample_y = int(sample_y)
 
-        self.show_debug = bool(rospy.get_param("~show_debug", True))
+        self.warper = None           # 프레임 크기 확정 후 생성
+        self.slidewindow = SlideWindow(sample_y=self.sample_y)
 
-        # 조향 계산 파라미터 (기존 main.py 기반)
-        self.target_x = int(rospy.get_param("~target_x", 280))
-        self.k_steer = float(rospy.get_param("~k_steer", 0.003))
+    def _ensure_warper(self, w: int, h: int):
+        if self.warper is None or self.warper.w != w or self.warper.h != h:
+            self.warper = Warper(w=w, h=h)
 
-        # 내부 steer(rad) 제한(기존 -0.34~+0.34) → -90~+90도로 스케일
-        self.steer_limit_rad = float(rospy.get_param("~steer_limit_rad", 0.34))
-        self.max_deg = float(rospy.get_param("~max_deg", 90.0))
+    def preprocess(self, bgr: np.ndarray) -> np.ndarray:
+        """HSV 마스크(이진) 생성"""
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.hsv_low, self.hsv_high)
 
-        # ✅ 구독/발행 토픽
-        self.img_topic = rospy.get_param("~img_topic", "/usb_cam/image_raw")
-        self.out_topic = rospy.get_param("~out_topic", "steering_raw")
+        if self.use_morph:
+            k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=1)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=1)
 
-        self.pub = rospy.Publisher(self.out_topic, Float32, queue_size=1)
-        rospy.Subscriber(self.img_topic, Image, self.cb, queue_size=1)
+        return mask
 
-        rospy.loginfo(f"[LaneToSteeringRawNode] subscribe: {self.img_topic}")
-        rospy.loginfo(f"[LaneToSteeringRawNode] publish  : {self.out_topic} (deg -{self.max_deg}..+{self.max_deg})")
+    def process(self, bgr: np.ndarray):
+        """전체 파이프라인"""
+        if bgr is None or bgr.size == 0:
+            return None, "MID", {}
 
-    def cb(self, msg: Image):
-        try:
-            bgr = rosimg_to_bgr(msg)
-        except Exception as e:
-            rospy.logwarn_throttle(1.0, f"Image convert failed: {e}")
-            return
+        h, w = bgr.shape[:2]
+        self._ensure_warper(w, h)
 
-        x_loc, which, debug = self.detector.process(bgr)
+        mask = self.preprocess(bgr)
 
-        # steer(rad) 계산 (LaneDetector.compute_steering는 steer_limit clamp 포함)
-        steer_rad = self.detector.compute_steering(
-            x_location=x_loc,
-            target_x=self.target_x,
-            k_steer=self.k_steer,
-            steer_limit=self.steer_limit_rad,
-        )
+        # blur
+        k = self.blur_ksize
+        if k % 2 == 0:
+            k += 1
+        blur = cv2.GaussianBlur(mask, (k, k), 0)
 
-        # rad(-limit..+limit) -> deg(-90..+90) 스케일
-        if self.steer_limit_rad > 1e-6:
-            steer_deg = (steer_rad / self.steer_limit_rad) * self.max_deg
-        else:
-            steer_deg = 0.0
+        # warp
+        warped = self.warper.warp(blur)
 
-        # clamp 최종 보장
-        if steer_deg > self.max_deg:
-            steer_deg = self.max_deg
-        elif steer_deg < -self.max_deg:
-            steer_deg = -self.max_deg
+        # sliding window
+        slide_img, x_location, current_line = self.slidewindow.slidewindow(warped)
 
-        self.pub.publish(Float32(data=float(steer_deg)))
+        debug = {
+            "mask": mask,
+            "blur": blur,
+            "warped": warped,
+            "slide": slide_img,
+        }
+        return x_location, current_line, debug
 
-        if self.show_debug:
-            cv2.imshow("mask", debug["mask"])
-            cv2.imshow("warped", debug["warped"])
-            cv2.imshow("slide", debug["slide"])
-            cv2.waitKey(1)
-
-
-def main():
-    rospy.init_node("lane_to_steering_raw", anonymous=False)
-    LaneToSteeringRawNode()
-    rospy.spin()
-
-
-if __name__ == "__main__":
-    main()
+    def compute_steering(self, x_location, target_x, k_steer=0.003, steer_limit=0.34):
+        if x_location is None:
+            return 0.0
+        error = float(target_x - x_location)
+        steer = error * float(k_steer)
+        if steer > steer_limit:
+            steer = steer_limit
+        elif steer < -steer_limit:
+            steer = -steer_limit
+        return steer

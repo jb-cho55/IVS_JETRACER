@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os, sys
+sys.path.insert(0, os.path.dirname(__file__))
 import rospy
 import numpy as np
 import cv2
