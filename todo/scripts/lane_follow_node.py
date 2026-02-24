@@ -34,12 +34,30 @@ def rosimg_to_bgr(msg: Image):
     raise ValueError(f"Unsupported encoding: {msg.encoding}")
 
 
+def parse_lane_colors(raw):
+    if isinstance(raw, str):
+        colors = [c.strip() for c in raw.split(",") if c.strip()]
+    elif isinstance(raw, (list, tuple)):
+        colors = [str(c).strip() for c in raw if str(c).strip()]
+    else:
+        colors = []
+
+    if not colors:
+        return ["black"]
+    return colors
+
+
 class LaneToSteeringRawNode:
     def __init__(self):
+        lane_colors_param = rospy.get_param("~lane_colors", rospy.get_param("~lane_color", "black"))
         # 차선 인식기
         self.detector = LaneDetector(
+            lane_colors=parse_lane_colors(lane_colors_param),
             hsv_low=tuple(rospy.get_param("~hsv_low", [50, 50, 50])),
             hsv_high=tuple(rospy.get_param("~hsv_high", [255, 255, 255])),
+            use_base_hsv=bool(rospy.get_param("~use_base_hsv", False)),
+            black_low=tuple(rospy.get_param("~black_low", [0, 0, 0])),
+            black_high=tuple(rospy.get_param("~black_high", [180, 255, 70])),
             blur_ksize=int(rospy.get_param("~blur_ksize", 5)),
             use_edge=bool(rospy.get_param("~use_edge", True)),
             canny_low=int(rospy.get_param("~canny_low", 50)),
@@ -66,6 +84,10 @@ class LaneToSteeringRawNode:
 
         rospy.loginfo(f"[LaneToSteeringRawNode] subscribe: {self.img_topic}")
         rospy.loginfo(f"[LaneToSteeringRawNode] publish  : {self.out_topic} (deg -{self.max_deg}..+{self.max_deg})")
+        rospy.loginfo(
+            f"[LaneToSteeringRawNode] lane_colors={self.detector.lane_colors}, "
+            f"use_base_hsv={self.detector.use_base_hsv}"
+        )
 
     def cb(self, msg: Image):
         try:
@@ -99,9 +121,25 @@ class LaneToSteeringRawNode:
         self.pub.publish(Float32(data=float(steer_deg)))
 
         if self.show_debug:
-            cv2.imshow("mask", debug["mask"])
-            cv2.imshow("warped", debug["warped"])
-            cv2.imshow("slide", debug["slide"])
+            display = bgr.copy()
+
+            slide = debug.get("slide")
+            if slide is not None and self.detector.warper is not None:
+                # Keep only colored sliding-window drawings and project them back.
+                colored = (slide[:, :, 0] != slide[:, :, 1]) | (slide[:, :, 1] != slide[:, :, 2])
+                slide_overlay = np.zeros_like(slide)
+                slide_overlay[colored] = slide[colored]
+
+                overlay_unwarped = self.detector.warper.unwarp(slide_overlay)
+                overlay_mask = np.any(overlay_unwarped > 0, axis=2)
+                blended = cv2.addWeighted(display, 1.0, overlay_unwarped, 0.9, 0.0)
+                display[overlay_mask] = blended[overlay_mask]
+
+            text = f"steering_cmd: {steer_deg:+.1f} deg"
+            cv2.putText(display, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
+            cv2.putText(display, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
+
+            cv2.imshow("lane_follow_debug", display)
             cv2.waitKey(1)
 
 

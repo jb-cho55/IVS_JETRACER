@@ -17,8 +17,12 @@ class LaneDetector:
 
     def __init__(
         self,
+        lane_colors=("black",),
         hsv_low=(50, 50, 50),
         hsv_high=(255, 255, 255),
+        use_base_hsv=False,
+        black_low=(0, 0, 0),
+        black_high=(180, 255, 70),
         blur_ksize=5,
         use_morph=True,
         use_edge=True,
@@ -26,8 +30,24 @@ class LaneDetector:
         canny_high=150,
         sample_y=340,
     ):
+        self.lane_colors = self._normalize_lane_colors(lane_colors)
         self.hsv_low = np.array(hsv_low, dtype=np.uint8)
         self.hsv_high = np.array(hsv_high, dtype=np.uint8)
+        self.use_base_hsv = bool(use_base_hsv)
+        self.color_ranges = {
+            "white": (
+                np.array([0, 0, 200], dtype=np.uint8),
+                np.array([180, 80, 255], dtype=np.uint8),
+            ),
+            "yellow": (
+                np.array([15, 70, 70], dtype=np.uint8),
+                np.array([40, 255, 255], dtype=np.uint8),
+            ),
+            "black": (
+                np.array(black_low, dtype=np.uint8),
+                np.array(black_high, dtype=np.uint8),
+            ),
+        }
         self.blur_ksize = int(blur_ksize)
         self.use_morph = bool(use_morph)
         self.use_edge = bool(use_edge)
@@ -38,6 +58,24 @@ class LaneDetector:
         self.warper = None
         self.slidewindow = SlideWindow(sample_y=self.sample_y)
 
+    def _normalize_lane_colors(self, lane_colors):
+        supported = {"white", "yellow", "black"}
+
+        if isinstance(lane_colors, str):
+            colors = [c.strip().lower() for c in lane_colors.split(",") if c.strip()]
+        else:
+            colors = [str(c).strip().lower() for c in lane_colors if str(c).strip()]
+
+        if not colors:
+            colors = ["black"]
+
+        invalid = [c for c in colors if c not in supported]
+        if invalid:
+            raise ValueError(f"Unsupported lane_colors: {invalid}. Supported: {sorted(supported)}")
+
+        # Remove duplicates but keep order.
+        return tuple(dict.fromkeys(colors))
+
     def _ensure_warper(self, w: int, h: int):
         if self.warper is None or self.warper.w != w or self.warper.h != h:
             self.warper = Warper(w=w, h=h)
@@ -46,23 +84,16 @@ class LaneDetector:
         """Build robust binary from color + edge."""
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
-        # Keep the existing configurable HSV mask.
-        base_mask = cv2.inRange(hsv, self.hsv_low, self.hsv_high)
+        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
 
-        # Add lane-oriented color masks for white and yellow markings.
-        white_mask = cv2.inRange(
-            hsv,
-            np.array([0, 0, 200], dtype=np.uint8),
-            np.array([180, 80, 255], dtype=np.uint8),
-        )
-        yellow_mask = cv2.inRange(
-            hsv,
-            np.array([15, 70, 70], dtype=np.uint8),
-            np.array([40, 255, 255], dtype=np.uint8),
-        )
+        if self.use_base_hsv:
+            base_mask = cv2.inRange(hsv, self.hsv_low, self.hsv_high)
+            mask = cv2.bitwise_or(mask, base_mask)
 
-        mask = cv2.bitwise_or(base_mask, white_mask)
-        mask = cv2.bitwise_or(mask, yellow_mask)
+        for color in self.lane_colors:
+            low, high = self.color_ranges[color]
+            color_mask = cv2.inRange(hsv, low, high)
+            mask = cv2.bitwise_or(mask, color_mask)
 
         if self.use_edge:
             gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
