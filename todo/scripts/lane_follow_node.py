@@ -41,6 +41,9 @@ class LaneToSteeringRawNode:
             hsv_low=tuple(rospy.get_param("~hsv_low", [50, 50, 50])),
             hsv_high=tuple(rospy.get_param("~hsv_high", [255, 255, 255])),
             blur_ksize=int(rospy.get_param("~blur_ksize", 5)),
+            use_edge=bool(rospy.get_param("~use_edge", True)),
+            canny_low=int(rospy.get_param("~canny_low", 50)),
+            canny_high=int(rospy.get_param("~canny_high", 150)),
             sample_y=int(rospy.get_param("~sample_y", 340)),
         )
 
